@@ -859,12 +859,13 @@ pub(crate) enum WindowRequest {
 }
 
 pub(crate) fn hit_test(window: &gdk::Window, cx: f64, cy: f64) -> WindowEdge {
-  let (left, top) = window.get_position();
   let (w, h) = (window.get_width(), window.get_height());
-  let (right, bottom) = (left + w, top + h);
-  let (cx, cy) = (cx as i32, cy as i32);
 
   let fake_border = 5; // change this to manipulate how far inside the window, the resize can happen
+
+  let (left, top) = window.get_position();
+  let (right, bottom) = (left + w, top + h);
+  let (cx, cy) = (cx as i32, cy as i32);
 
   let display = window.get_display();
 

@@ -47,7 +47,6 @@ mod original {
     pub use winit::platform::run_return;
 
     pub mod windows {
-      use winapi::Interface;
       use winit::platform::windows::WindowExtWindows as WindowExtWindows_;
       pub use winit::platform::windows::{
         DeviceIdExtWindows, EventLoopExtWindows, IconExtWindows, MonitorHandleExtWindows,
@@ -61,11 +60,16 @@ mod original {
       use {
         std::ptr,
         winapi::{
-          shared::windef::HWND,
+          shared::{
+            minwindef::{LPARAM, WPARAM},
+            windef::HWND,
+          },
           um::{
             combaseapi::{CoCreateInstance, CLSCTX_SERVER},
             shobjidl_core::{CLSID_TaskbarList, ITaskbarList},
+            winuser,
           },
+          Interface,
         },
       };
 
@@ -83,6 +87,9 @@ mod original {
 
         /// This removes taskbar icon of the application.
         fn skip_taskbar(&self);
+
+        /// Starts resizing of the window
+        fn resize_window(&self, edge: isize);
 
         /// Returns the current window theme.
         fn theme(&self) -> Theme;
@@ -132,6 +139,27 @@ mod original {
         #[inline]
         fn theme(&self) -> Theme {
           WindowExtWindows_::theme(self)
+        }
+
+        #[inline]
+        fn resize_window(&self, edge: isize) {
+          #[cfg(feature = "win32")]
+          unsafe {
+            let point = {
+              let mut pos = std::mem::zeroed();
+              winuser::GetCursorPos(&mut pos);
+              pos
+            };
+
+            winuser::ReleaseCapture();
+
+            winuser::PostMessageW(
+              WindowExtWindows_::hwnd(self) as HWND,
+              winuser::WM_NCLBUTTONDOWN,
+              edge as WPARAM,
+              &point as *const _ as LPARAM,
+            );
+          }
         }
       }
     }

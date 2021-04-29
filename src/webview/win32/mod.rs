@@ -5,20 +5,25 @@
 mod file_drop;
 
 use crate::{
+  application::platform::windows::WindowExtWindows,
   webview::{mimetype::MimeType, FileDropEvent, RpcRequest, RpcResponse},
   Result,
 };
 
 use file_drop::FileDropController;
+use winit::window::CursorIcon;
 
 use std::{collections::HashSet, os::raw::c_void, path::PathBuf, rc::Rc};
 
 use once_cell::unsync::OnceCell;
 use url::Url;
 use webview2::{Controller, PermissionKind, PermissionState};
-use winapi::{shared::windef::HWND, um::winuser::GetClientRect};
+use winapi::{
+  shared::windef::HWND,
+  um::winuser::{self, GetClientRect},
+};
 
-use crate::application::{platform::windows::WindowExtWindows, window::Window};
+use crate::application::window::Window;
 
 pub struct InnerWebView {
   controller: Rc<OnceCell<Controller>>,
@@ -102,6 +107,16 @@ impl InnerWebView {
           "window.external={invoke:s=>window.chrome.webview.postMessage(s)}",
           |_| (Ok(())),
         )?;
+        w.add_script_to_execute_on_document_created(
+          r#"
+            window.addEventListener('mousedown', (e) => {
+              if (e.buttons === 1) window.chrome.webview.postMessage('__WEBVIEW_LEFT_MOUSE_DOWN__')
+            });
+
+            window.addEventListener('mousemove', () => window.chrome.webview.postMessage('__WEBVIEW_MOUSE_MOVE__'));
+            "#,
+          |_| (Ok(())),
+        )?;
         for js in scripts {
           w.add_script_to_execute_on_document_created(&js, |_| (Ok(())))?;
         }
@@ -110,6 +125,77 @@ impl InnerWebView {
         let window_ = window.clone();
         w.add_web_message_received(move |webview, args| {
           let js = args.try_get_web_message_as_string()?;
+
+          if js == "__WEBVIEW_LEFT_MOUSE_DOWN__" || js == "__WEBVIEW_MOUSE_MOVE__" {
+            // if !window_.is_decorated() && window_.is_resizable() {
+              if let Ok(pos) = window_.inner_position() {
+                let size = window_.inner_size();
+
+                let fake_border = 5; // change this to manipulate how far inside the window, the resize can happen
+
+                let (left, top) = (pos.x, pos.y);
+                let (right, bottom) = (left + (size.width as i32), top + (size.height as i32));
+                let (cx, cy);
+                unsafe {
+                  let mut point = std::mem::zeroed();
+                  winuser::GetCursorPos(&mut point);
+                  cx = point.x;
+                  cy = point.y;
+                }
+
+
+                const LEFT: i32 = 0b00001;
+                const RIGHT: i32 = 0b0010;
+                const TOP: i32 = 0b0100;
+                const BOTTOM: i32 = 0b1000;
+                const TOPLEFT: i32 = TOP | LEFT;
+                const TOPRIGHT: i32 = TOP | RIGHT;
+                const BOTTOMLEFT: i32 = BOTTOM | LEFT;
+                const BOTTOMRIGHT: i32 = BOTTOM | RIGHT;
+
+                let result = (LEFT * (if cx < (left + fake_border) { 1 } else { 0 }))
+                  | (RIGHT * (if cx >= (right - fake_border) { 1 } else { 0 }))
+                  | (TOP * (if cy < (top + fake_border) { 1 } else { 0 }))
+                  | (BOTTOM * (if cy >= (bottom - fake_border) { 1 } else { 0 }));
+
+                let cursor = match result {
+                  LEFT => CursorIcon::WResize,
+                  TOP => CursorIcon::NResize,
+                  RIGHT => CursorIcon::EResize,
+                  BOTTOM => CursorIcon::SResize,
+                  TOPLEFT => CursorIcon::NwResize,
+                  TOPRIGHT => CursorIcon::NeResize,
+                  BOTTOMLEFT => CursorIcon::SwResize,
+                  BOTTOMRIGHT => CursorIcon::SeResize,
+                  _ => CursorIcon::Arrow,
+                };
+                window_.set_cursor_icon(cursor);
+
+                if js == "__WEBVIEW_LEFT_MOUSE_DOWN__"  {
+                  let edge = match result {
+                    LEFT => winuser::HTLEFT,
+                    TOP => winuser::HTTOP,
+                    RIGHT => winuser::HTRIGHT,
+                    BOTTOM => winuser::HTBOTTOM,
+                    TOPLEFT => winuser::HTTOPLEFT,
+                    TOPRIGHT => winuser::HTTOPRIGHT,
+                    BOTTOMLEFT => winuser::HTBOTTOMLEFT,
+                    BOTTOMRIGHT => winuser::HTBOTTOMRIGHT,
+                    _ => winuser::HTCLIENT,
+                  };
+
+                  // this check is necessary, otherwise any window dragging implementation won't work
+                  if edge != winuser::HTCLIENT {
+                    window_.resize_window(edge);
+                  }
+                }
+              };
+
+            // }
+            // these are internal messages, rpc_handlers don't need it so exit early
+            return Ok(());
+          }
+
           if let Some(rpc_handler) = rpc_handler.as_ref() {
             match super::rpc_proxy(&window_, js, rpc_handler) {
               Ok(result) => {
