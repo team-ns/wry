@@ -167,7 +167,7 @@ impl<T: 'static> EventLoop<T> {
     EventLoop::new_any_thread()
   }
 
-  pub(crate) fn new_any_thread() -> EventLoop<T> {
+  pub fn new_any_thread() -> EventLoop<T> {
     EventLoop::new_gtk_any_thread().expect("Failed to initialize any backend!")
   }
 
